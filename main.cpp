@@ -1,6 +1,7 @@
 #include <iostream>
 #include <numbers>
 #include <cmath>
+#include <fstream>
 
 #include "ceres/ceres.h"
 #include "ceres/cubic_interpolation.h"
@@ -106,19 +107,77 @@ void create_czp_image(int w, int h, double cx, double cy, double* pBuf)
 //    cv::waitKey(1);
 //}
 
+void optimize(int w, int h, double* pImg0, double* pImg1, double tx, double ty)
+{
+    ceres::Problem problem;
+
+    ImageGrid grid(pImg1, 0, h, 0, w);
+    Interpolator img1Interp(grid);
+
+    std::vector<double> translate{tx, ty};
+
+    std::cout << std::endl << "AddResidualBlock ..." << std::endl;
+    for( int y = 0 ; y < h ; ++y)
+    {
+        for( int x = 0 ; x < w ; ++x)
+        {
+            auto cost = ImageDiffFunctor::create( w, h, x, y, pImg0, img1Interp);
+            problem.AddResidualBlock(cost, nullptr, translate.data());
+        }
+    }
+
+    //
+    // optimize
+    //
+    ceres::Solver::Options options;
+    options.minimizer_progress_to_stdout = true;
+//    options.check_gradients = true;
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+
+    std::cout << summary.BriefReport() << std::endl;
+    std::cout << summary.FullReport() << std::endl;
+    std::cout << "solution : x = " << translate[0] << ", y = " << translate[1] << std::endl;
+
+    //
+    // evaluate
+    //
+    double cost;
+    std::vector<double> residuals, gradient;
+    ceres::CRSMatrix jacobian;
+    auto opt = ceres::Problem::EvaluateOptions();
+    problem.Evaluate(opt, &cost, &residuals, &gradient, &jacobian);
+
+    std::cout << "size of residuals = " << residuals.size() << std::endl;
+    std::cout << "size of gradient = " << gradient.size() << std::endl;
+    {
+        std::ofstream ofs("residual.txt");
+        for (auto i=0; i < residuals.size() ; ++i) {
+            ofs << residuals[i] << std::endl ;
+        }
+    }
+    {
+        std::ofstream ofs("gradient.txt");
+        for (auto i=0; i < gradient.size() ; ++i) {
+            ofs << gradient[i] << std::endl ;
+        }
+    }
+
+}
+
 int main() {
     // image size
-    const int width = 640;
-    const int height = 480;
+    const int width = 320;
+    const int height = 240;
     // Img1 offset
-    const double offsetX = 10;
-    const double offsetY = 5;
+    const double offsetX = 5;
+    const double offsetY = 0;
     // position of residual block
-    const int xPos = int(round(width-1.0)/2.0) + 200;
-    const int yPos = int(round(height-1.0)/2.0) + 200;
+    const int xPos = int(round(width-1.0)/2.0) + 100;
+    const int yPos = int(round(height-1.0)/2.0) + 100;
     // initial parameter(translation)
-    const double tx = 10;
-    const double ty = 5;
+    const double tx = 5;
+    const double ty = 0;
 
     //
     // setup images
@@ -160,7 +219,7 @@ int main() {
         std::cout << "An error has occurred:\n" << results.error_log;
     }
 
-    std::cout << std::endl << "ProbeResults" << std::endl;
+    std::cout << std::endl << "GradientChecker ProbeResults" << std::endl;
     std::cout << "return_value : " <<  results.return_value << std::endl;
     std::cout << "maximum_relative_error : " <<  results.maximum_relative_error << std::endl;
     std::cout << "residuals : " <<  results.residuals(0) << std::endl;
@@ -170,6 +229,11 @@ int main() {
     std::cout << "local_numeric_jacobians : " <<  results.local_numeric_jacobians[0](0) << ", " <<  results.local_numeric_jacobians[0](1) << std::endl;
 
 //    cv::waitKey(0);
+
+    //
+    // optimize
+    //
+    optimize(width, height, pImg0, pImg1, tx, ty);
 
     delete [] pImg0;
     delete [] pImg1;
